@@ -73,11 +73,10 @@ for train_index, test_index in kf.split(data):
     gc.collect()
 
     if text_model_name == 'sentence-transformers/clip-ViT-B-32-multilingual-v1':
-
         text_model = SentenceTransformer(text_model_name).to(device)
         img_model =  CLIPModel.from_pretrained(image_model_name).to(device)
         classifier = mCLIPClassifier(img_model,text_model).to(device)
-        processor = multilingual_processor
+        processor = mCLIPProcessor(text_model_name=text_model_name,image_model_name=image_model_name)
 
     elif text_model_name == "Gregor/mblip-mt0-xl":
         processor = AutoProcessor.from_pretrained(text_model_name)
@@ -90,8 +89,8 @@ for train_index, test_index in kf.split(data):
         print("Dataset Definition with model Processor")
         train_dataset = MemeDataset_processor(data.iloc[train_index], processor, image_folder)
     else:
-        print("Dataset Definition with Custom model Processor")
-        train_dataset = MemeDataset_mCLIP(data.iloc[train_index], multilingual_processor, image_folder)
+        print("Dataset Definition without model Processor")
+        train_dataset = MemeDataset(data.iloc[train_index], image_folder)
 
     print(train_dataset)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
@@ -112,9 +111,7 @@ for train_index, test_index in kf.split(data):
         print("Dataset Definition with model Processor")
         test_set = DataLoader(MemeDataset_processor(data.iloc[test_index], processor, image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     else:
-        #test_set = DataLoader(MemeDataset(data.iloc[test_index], image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-        test_set = DataLoader(MemeDataset_mCLIP(data.iloc[test_index], multilingual_processor, image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-
+        test_set = DataLoader(MemeDataset(data.iloc[test_index], image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
     if threshold == 'Youden':
         print("Estimating JYouden threshold... ")

@@ -1,4 +1,3 @@
-#from transformers import AutoProcessor, mBLIP
 from transformers import BlipModel, BlipProcessor, CLIPModel
 from sentence_transformers import SentenceTransformer
 import torch
@@ -9,15 +8,11 @@ from sklearn.metrics import roc_curve
 from numpy import argmax
 import yaml
 from transformers import AutoProcessor, BlipForConditionalGeneration, CLIPProcessor
+from transformers import AutoTokenizer, CLIPImageProcessor
 import torch.nn.functional as F
+from typing import Union, List
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-with open("config.yaml", "r") as config_file:
-    config = yaml.safe_load(config_file)
-
-text_model_name = config["model"]["text_model_name"]
-
 
 class mCLIPClassifier(nn.Module):
     def __init__(self, clip_image_model, clip_text_model):
@@ -53,6 +48,63 @@ class mCLIPClassifier(nn.Module):
         combined = torch.cat((text_embeds, image_embeds), dim=1)  # [batch_size, 1024]
         x = self.fc(combined)  # [batch_size, 1]
         return torch.sigmoid(x)
+
+class mCLIPProcessor:
+    def __init__(
+        self,
+        text_model_name: str = "sentence-transformers/clip-ViT-B-32-multilingual-v1",
+        image_model_name: str = "openai/clip-vit-base-patch32"
+        ):
+        self.tokenizer = AutoTokenizer.from_pretrained(text_model_name)
+        self.image_processor = CLIPImageProcessor.from_pretrained(image_model_name)
+
+    def __call__(
+            self,
+            text: Union[str, List[str]],
+            images: Union[Image.Image, List[Image.Image]],
+            return_tensors: str = "pt",
+            padding: Union[bool, str] = True,
+            truncation: bool = True,
+            max_length: int = 77,
+        ):
+        """
+        Preprocess multilingual text and images like CLIPProcessor does.
+
+        Supports both single and batched inputs.
+
+        Args:
+            text (str or List[str]): Text or list of texts.
+            images (PIL.Image or List[PIL.Image]): Image or list of images.
+            return_tensors (str): Output tensor format ("pt", "np", etc.).
+            padding (bool or str): Padding strategy.
+            truncation (bool): Truncate text inputs.
+            max_length (int): Max text sequence length.
+
+        Returns:
+            Dict[str, torch.Tensor]: Combined preprocessed inputs for CLIP model.
+        """
+
+        # Normalize to list
+        if isinstance(text, str):
+            text = [text]
+        if isinstance(images, Image.Image):
+            images = [images]
+
+        encoded_text = self.tokenizer(
+            text,
+            padding=padding,
+            truncation=truncation,
+            max_length=max_length,
+            return_tensors=return_tensors
+        )
+
+        encoded_images = self.image_processor(
+            images=images,
+            return_tensors=return_tensors
+        )
+        
+        processed = {**encoded_text, **encoded_images}
+        return {k: v.squeeze(0) for k, v in processed.items()} 
 
 class mBLIPClassifier(nn.Module):
     """
@@ -122,10 +174,7 @@ def train(model, dataloader, optimizer, criterion, device):
     total_loss = 0
     for inputs, targets in tqdm(dataloader):        
         # Ensure all inputs are on the correct device
-        #print(inputs)
-        #inputs = {k: v.to(device) for k, v in inputs.items() }
         inputs = {k:v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
-        #print(inputs)
         targets = targets.to(device).float()
 
         optimizer.zero_grad()
