@@ -1,0 +1,195 @@
+import pandas as pd
+from sklearn.model_selection import KFold
+from sklearn.utils import shuffle 
+
+import os
+import numpy as np
+import json
+import gc
+import yaml
+from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Subset
+
+import torch
+import torch.nn as nn
+from sentence_transformers import SentenceTransformer
+
+import torchvision.transforms as transforms
+from torchvision import transforms
+import torch.optim as optim
+from tqdm import tqdm
+from Utils import results_organizer
+from Utils.classifiers import *
+from Utils.data_preprocessing import *
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
+device='cuda'
+
+if torch.cuda.is_available():
+    num_devices = torch.cuda.device_count()
+    print(f"Number of CUDA devices available: {num_devices}")
+    for i in range(num_devices):
+        print(f"Device {i}: {torch.cuda.get_device_name(i)}")
+
+
+with open("config.yaml", "r") as config_file:
+    config = yaml.safe_load(config_file)
+
+# data
+image_folder = config["data"]["image_folder"]
+data_path = config["data"]["data_path"] 
+label_column = config["data"]["label_column"]
+#results
+output_folder = config["output"]["main_output_folder"]
+# finetuning classifier
+epochs = config["model"]["epochs"]
+model_processor = config["model"]["processor"]
+batch_size = config["model"]["batch_size"]
+threshold = config["model"]["threshold"]
+save_models = config["model"]["save_models"]
+saving_folder = config["model"]["saving_folder"]
+text_model_name = config["model"]["text_model_name"]
+image_model_name = config["model"]["image_model_name"]
+
+prefix = "fine_tuned_"
+print("Results for this model will be saved with the prefix " + prefix + text_model_name.split('/')[1])
+
+print("\tLoading data ...")
+data = import_MAMIta(data_path)
+print(data)
+
+all_predictions = []
+all_true_labels = []
+indexes = []
+
+
+print("starting fold-iteration....")
+#read folds
+kf = KFold(n_splits=10, shuffle=True, random_state=42) #posso fare lo shuffle perchè lo fa sugli indici
+fold = 1
+
+for train_index, test_index in kf.split(data):
+    gc.collect()
+
+    if text_model_name == 'sentence-transformers/clip-ViT-B-32-multilingual-v1':
+
+        text_model = SentenceTransformer(text_model_name).to(device)
+        img_model =  CLIPModel.from_pretrained(image_model_name).to(device)
+        classifier = mCLIPClassifier(img_model,text_model).to(device)
+        processor = multilingual_processor
+
+    elif text_model_name == "Gregor/mblip-mt0-xl":
+        processor = AutoProcessor.from_pretrained(text_model_name)
+        model = BlipForConditionalGeneration.from_pretrained(text_model_name).to(device)
+        classifier = mBLIPClassifier(model).to(device) 
+
+        print("model loaded on " + classifier.blip_model.device)
+
+    if model_processor:
+        print("Dataset Definition with model Processor")
+        train_dataset = MemeDataset_processor(data.iloc[train_index], processor, image_folder)
+    else:
+        print("Dataset Definition with Custom model Processor")
+        train_dataset = MemeDataset_mCLIP(data.iloc[train_index], multilingual_processor, image_folder)
+
+    print(train_dataset)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+
+    print('initializing model ... ')
+
+    optimizer = optim.Adam(classifier.parameters(), lr=1e-4) #optimizes all the parameters of the classifier, including those of both the CLIP model and the fully connected (fc) layer.
+    criterion = nn.BCEWithLogitsLoss()
+
+    print("training model...")
+    for epoch in range(epochs):
+        train_loss = train(classifier, train_loader, optimizer, criterion, device)
+        print(f"Fold {str(fold)}, Epoch {epoch+1}, Training Loss: {train_loss}")
+        print("Allocated:", torch.cuda.memory_allocated() / 1024**2, "MB")
+        print("Cached:   ", torch.cuda.memory_reserved() / 1024**2, "MB")
+
+    if model_processor:
+        print("Dataset Definition with model Processor")
+        test_set = DataLoader(MemeDataset_processor(data.iloc[test_index], processor, image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    else:
+        #test_set = DataLoader(MemeDataset(data.iloc[test_index], image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+        test_set = DataLoader(MemeDataset_mCLIP(data.iloc[test_index], multilingual_processor, image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+
+
+    if threshold == 'Youden':
+        print("Estimating JYouden threshold... ")
+        # isolate the validation to estimate the best threshold
+        validation = Subset(train_dataset, range(int(len(train_dataset) * 0.9), len(train_dataset)))
+        validation = DataLoader(
+                validation,
+                batch_size=batch_size,
+                shuffle=False,
+                collate_fn=collate_fn
+            )
+        
+        all_preds = []
+        all_targets = []
+        with torch.no_grad():
+            for inputs, targets in tqdm(validation):
+                inputs = {k:v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+                targets = targets.to(device).float()
+                outputs = classifier(inputs).squeeze(1)
+
+                all_preds.append(outputs.cpu())
+                all_targets.append(targets.cpu())
+
+        # Concatenate everything into a single array
+        all_preds = torch.cat(all_preds).numpy()
+        all_targets = torch.cat(all_targets).numpy()
+
+        # Compute Youden threshold once on all data
+        best_threshold = get_Youden_threshold(all_targets, all_preds)
+        print("Estimated Youden Threshold: ", best_threshold)
+
+    with torch.no_grad():
+        #probs_0 = []
+        #probs_1 = []
+        for inputs, targets in tqdm(test_set):
+            #print(targets)
+
+            #inputs = {k: v.to(device) for k, v in inputs.items()}
+            inputs = {k:v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
+            targets = targets.to(device).float()
+            outputs = classifier(inputs).squeeze(1)
+        
+            if threshold == 'Youden':
+                #print("Using Threshold: " + str(best_threshold))
+                #threshold = get_Youden_threshold(targets.cpu().numpy(), outputs.cpu().numpy())
+                preds = (outputs > best_threshold).int()
+            else:
+                preds = (outputs > threshold).int()
+            
+            all_predictions.extend(preds.cpu().numpy())
+            all_true_labels.extend(targets.cpu().numpy())
+
+            """
+            for item in outputs:
+                probs_0.append(1- item.detach().cpu().item())
+                probs_1.append(item.detach().cpu().item())
+            """
+
+    indexes.extend(test_index)
+
+    if save_models:
+            # Optionally save the models
+            a = str(text_model_name.split('/')[1])
+            classifier.save(f'{saving_folder}_{prefix}_{a}_classifier_{str(fold)}.h5')
+
+    fold = fold +1
+
+
+macro_f1 = results_organizer.save_performances_on_file(output_folder, prefix+"_", text_model_name, all_true_labels, all_predictions)
+
+print(data.shape)
+print(len(all_predictions))
+print(len(all_true_labels))
+
+results_organizer.save_predictions_on_file(output_folder, data_path, data, prefix+"_" + text_model_name, all_predictions, all_true_labels, label_column, indexes)
+
+
+

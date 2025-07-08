@@ -1,0 +1,18 @@
+model:
+  text_model_name: sentence-transformers/clip-ViT-B-32-multilingual-v1 
+  processor: True
+  image_model_name: openai/clip-vit-base-patch32
+  model_type: multimodal
+  batch_size: 1
+  epochs: 1
+  threshold: Youden
+  save_models: False 
+  saving_folder: ./models/
+  
+data:
+  image_folder: ../MEME_ita/data/
+  data_path: ../MEME_ita/data/processed_data_complete2.csv
+  label_column: label
+
+output:
+  main_output_folder : ./outputs/
