@@ -41,7 +41,9 @@ with open("config.yaml", "r") as config_file:
 
 # data
 image_folder = config["data"]["image_folder"]
-data_path = config["data"]["data_path"] 
+dataset_name = config["data"].get("dataset_name")
+data_path = config["data"]["data_path"]
+label_path = config["data"].get("label_path", data_path)
 label_column = config["data"]["label_column"]
 #results
 output_folder = config["output"]["main_output_folder"]
@@ -59,15 +61,7 @@ prefix = "fine_tuned_"
 print("Results for this model will be saved with the prefix " + prefix + text_model_name.split('/')[1])
 
 print("\tLoading data ...")
-#data = import_MAMIta(data_path)
-data_path = "EXIST/MEME/training/EXIST2024_training.json"
-labels_path = "EXIST/MEME/training/EXIST2024_training.json"
-#label_column =  "disagreement"
-data_folder = "../data/"
-
-data =  get_data(os.path.join(data_folder,data_path.lstrip("/\\")), 
-        os.path.join(data_folder,labels_path.lstrip("/\\")), 
-        label_column)
+data = get_data(data_path, label_path, label_column, dataset_name=dataset_name)
 
 print(data.head())
 
@@ -106,7 +100,7 @@ for train_index, test_index in kf.split(data):
         print(f"Trainable params (text):  {text_params}")
         print(f"Trainable params (head):  {head_params}")
         print(f"Total trainable params:   {total_params}")
-        sys.exit("Stopping after parameter count as requested.")
+        #sys.exit("Stopping after parameter count as requested.")
 
 
         
@@ -126,7 +120,7 @@ for train_index, test_index in kf.split(data):
         print(f"Trainable params (proj):  {proj_params}")
         print(f"Trainable params (head):  {head_params}")
         print(f"Total trainable params:   {total_params}")
-        sys.exit("Stopping after parameter count as requested.")
+        #sys.exit("Stopping after parameter count as requested.")
 
         print(classifier.blip_model.device)
     elif text_model_name == "google/siglip-base-patch16-256-multilingual":
@@ -147,7 +141,7 @@ for train_index, test_index in kf.split(data):
         print(f"Trainable params (SigLIP backbone): {backbone_params}")
         print(f"Trainable params (head):            {head_params}")
         print(f"Total trainable params:             {total_params}")
-        sys.exit("Stopping after parameter count as requested.")
+        #sys.exit("Stopping after parameter count as requested.")
         
 
     else: 

@@ -10,8 +10,10 @@ model:
   saving_folder: ./models/
   
 data:
+  dataset_name: EXIST
   image_folder: ../MEME_ita/data/
   data_path: ../MEME_ita/data/processed_data_complete2.csv
+  label_path: ../MEME_ita/data/processed_data_complete2.csv
   label_column: label
 
 output:

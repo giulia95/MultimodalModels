@@ -69,7 +69,8 @@ def save_predictions_on_file(output_folder, data_path, df, column_name, column_v
     Returns:
         pd.DataFrame: The updated DataFrame with the new column.
     """
-    csv_path = output_folder + 'models_prediction_'+ data_path.split('training/')[1].split('.')[0] +'.csv'
+    data_stem = Path(data_path).stem
+    csv_path = os.path.join(output_folder, f'models_prediction_{data_stem}.csv')
     
     df = handle_csv(csv_path, df, indexes)
 
