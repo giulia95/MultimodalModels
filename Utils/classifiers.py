@@ -4,15 +4,9 @@ from torch.nn.utils.rnn import pad_sequence
 from tqdm import tqdm
 from sklearn.metrics import roc_curve
 from numpy import argmax
-import yaml
 import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-with open("config.yaml", "r") as config_file:
-    config = yaml.safe_load(config_file)
-
-text_model_name = config["model"]["text_model_name"]
 
 
 class mCLIPClassifier(nn.Module):
@@ -176,33 +170,35 @@ def get_Youden_threshold(targets, pred):
     return best_thresh
 
 def collate_fn(batch):
-    
-    if text_model_name =='sentence-transformers/clip-ViT-B-32-multilingual-v1':
-        inputs = {
-            'text': [item[0]['text'] for item in batch],
-            'image': [item[0]['image'] for item in batch]
-        }
+    # Handle processor outputs which may have different structures
+    first_item = batch[0][0]
 
-    else:
-        # Handle processor outputs which may have different structures
-        first_item = batch[0][0]
-        
-        inputs = {}
-        
-        # Handle input_ids
-        if 'input_ids' in first_item:
-            input_ids = [item[0]['input_ids'].squeeze(0) for item in batch]
-            inputs['input_ids'] = pad_sequence(input_ids, batch_first=True, padding_value=0)
-        
-        # Handle attention_mask (optional, not all processors include it)
-        if 'attention_mask' in first_item:
-            attention_mask = [item[0]['attention_mask'].squeeze(0) if item[0]['attention_mask'].dim() > 1 else item[0]['attention_mask'] for item in batch]
-            inputs['attention_mask'] = pad_sequence(attention_mask, batch_first=True, padding_value=0)
-        
-        # Handle pixel_values
-        if 'pixel_values' in first_item:
-            pixel_values = [item[0]['pixel_values'].squeeze(0) if item[0]['pixel_values'].dim() > 3 else item[0]['pixel_values'] for item in batch]
-            inputs['pixel_values'] = torch.stack(pixel_values)
+    inputs = {}
+
+    # Handle input_ids
+    if 'input_ids' in first_item:
+        input_ids = [item[0]['input_ids'].squeeze(0) for item in batch]
+        inputs['input_ids'] = pad_sequence(input_ids, batch_first=True, padding_value=0)
+
+    # Handle attention_mask (optional, not all processors include it)
+    if 'attention_mask' in first_item:
+        attention_mask = [
+            item[0]['attention_mask'].squeeze(0)
+            if item[0]['attention_mask'].dim() > 1
+            else item[0]['attention_mask']
+            for item in batch
+        ]
+        inputs['attention_mask'] = pad_sequence(attention_mask, batch_first=True, padding_value=0)
+
+    # Handle pixel_values
+    if 'pixel_values' in first_item:
+        pixel_values = [
+            item[0]['pixel_values'].squeeze(0)
+            if item[0]['pixel_values'].dim() > 3
+            else item[0]['pixel_values']
+            for item in batch
+        ]
+        inputs['pixel_values'] = torch.stack(pixel_values)
 
     labels = torch.tensor([item[1] for item in batch])
 
