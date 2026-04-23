@@ -1,7 +1,7 @@
 import pandas as pd
 from sklearn.model_selection import KFold
 from sklearn.utils import shuffle 
-
+from transformers import AutoModel, AutoTokenizer, AutoProcessor
 import os
 import numpy as np
 import json
@@ -9,10 +9,10 @@ import gc
 import yaml
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data import Subset
-
+import sys
 import torch
 import torch.nn as nn
-from sentence_transformers import SentenceTransformer
+#from sentence_transformers import SentenceTransformer
 
 import torchvision.transforms as transforms
 from torchvision import transforms
@@ -24,14 +24,17 @@ from Utils.data_preprocessing import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
-device='cuda'
+#device='cuda'
+
+def count_trainable(module):
+    #return number of trainable parameters
+    return sum(p.numel() for p in module.parameters() if p.requires_grad)
 
 if torch.cuda.is_available():
     num_devices = torch.cuda.device_count()
     print(f"Number of CUDA devices available: {num_devices}")
     for i in range(num_devices):
         print(f"Device {i}: {torch.cuda.get_device_name(i)}")
-
 
 with open("config.yaml", "r") as config_file:
     config = yaml.safe_load(config_file)
@@ -56,8 +59,17 @@ prefix = "fine_tuned_"
 print("Results for this model will be saved with the prefix " + prefix + text_model_name.split('/')[1])
 
 print("\tLoading data ...")
-data = import_MAMIta(data_path)
-print(data)
+#data = import_MAMIta(data_path)
+data_path = "EXIST/MEME/training/EXIST2024_training.json"
+labels_path = "EXIST/MEME/training/EXIST2024_training.json"
+#label_column =  "disagreement"
+data_folder = "../data/"
+
+data =  get_data(os.path.join(data_folder,data_path.lstrip("/\\")), 
+        os.path.join(data_folder,labels_path.lstrip("/\\")), 
+        label_column)
+
+print(data.head())
 
 all_predictions = []
 all_true_labels = []
@@ -69,28 +81,85 @@ print("starting fold-iteration....")
 kf = KFold(n_splits=10, shuffle=True, random_state=42) #posso fare lo shuffle perchè lo fa sugli indici
 fold = 1
 
+
 for train_index, test_index in kf.split(data):
     gc.collect()
 
     if text_model_name == 'sentence-transformers/clip-ViT-B-32-multilingual-v1':
+        """
         text_model = SentenceTransformer(text_model_name).to(device)
         img_model =  CLIPModel.from_pretrained(image_model_name).to(device)
         classifier = mCLIPClassifier(img_model,text_model).to(device)
-        processor = mCLIPProcessor(text_model_name=text_model_name,image_model_name=image_model_name)
+        """
+        img_model = AutoModel.from_pretrained('openai/clip-vit-base-patch32').to(device)
+        text_model= AutoModel.from_pretrained(text_model_name).to(device)
+        tokenizer = AutoTokenizer.from_pretrained(text_model_name)
+        processor = AutoProcessor.from_pretrained('openai/clip-vit-base-patch32')
+        classifier = mCLIPClassifier(img_model, text_model, finetune=True).to(device)
 
+        # CALCOLO PARAMETRI
+        img_params = count_trainable(img_model)
+        text_params = count_trainable(text_model)
+        head_params = count_trainable(classifier.fc)
+        total_params = img_params + text_params + head_params
+        print(f"Trainable params (image): {img_params}")
+        print(f"Trainable params (text):  {text_params}")
+        print(f"Trainable params (head):  {head_params}")
+        print(f"Total trainable params:   {total_params}")
+        sys.exit("Stopping after parameter count as requested.")
+
+
+        
     elif text_model_name == "Gregor/mblip-mt0-xl":
+        #model = BlipModel.from_pretrained(text_model_name).to(device)
+        #processor = BlipProcessor.from_pretrained(text_model_name)
         processor = AutoProcessor.from_pretrained(text_model_name)
         model = BlipForConditionalGeneration.from_pretrained(text_model_name).to(device)
         classifier = mBLIPClassifier(model).to(device) 
 
-        print("model loaded on " + classifier.blip_model.device)
+        # CALCOLO PARAMETRI
+        blip_params = count_trainable(model)
+        proj_params = count_trainable(classifier.text_proj) + count_trainable(classifier.image_proj)
+        head_params = count_trainable(classifier.fc)
+        total_params = blip_params + proj_params + head_params
+        print(f"Trainable params (BLIP):  {blip_params}")
+        print(f"Trainable params (proj):  {proj_params}")
+        print(f"Trainable params (head):  {head_params}")
+        print(f"Total trainable params:   {total_params}")
+        sys.exit("Stopping after parameter count as requested.")
+
+        print(classifier.blip_model.device)
+    elif text_model_name == "google/siglip-base-patch16-256-multilingual":
+        processor = AutoProcessor.from_pretrained(text_model_name)
+        model = AutoModel.from_pretrained(text_model_name).to(device)
+        classifier = SigLIPClassifier(model, finetune=True).to(device)
+
+        # CALCOLO PARAMETRI
+        if classifier.fc is None:
+            embed_dim = getattr(model.config, "projection_dim", None)
+            if embed_dim is None:
+                embed_dim = model.config.vision_config.hidden_size
+            classifier.fc = nn.Linear(embed_dim * 2, 1).to(device)
+
+        backbone_params = count_trainable(model)
+        head_params = count_trainable(classifier.fc)
+        total_params = backbone_params + head_params
+        print(f"Trainable params (SigLIP backbone): {backbone_params}")
+        print(f"Trainable params (head):            {head_params}")
+        print(f"Total trainable params:             {total_params}")
+        sys.exit("Stopping after parameter count as requested.")
+        
+
+    else: 
+            raise ValueError("Unsupported model_type")
 
     if model_processor:
         print("Dataset Definition with model Processor")
         train_dataset = MemeDataset_processor(data.iloc[train_index], processor, image_folder)
     else:
         print("Dataset Definition without model Processor")
-        train_dataset = MemeDataset(data.iloc[train_index], image_folder)
+        #train_dataset = MemeDataset(data.iloc[train_index], image_folder)
+        train_dataset = MemeDataset_mCLIP(data.iloc[train_index], multilingual_processor, image_folder)
 
     print(train_dataset)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
@@ -111,7 +180,8 @@ for train_index, test_index in kf.split(data):
         print("Dataset Definition with model Processor")
         test_set = DataLoader(MemeDataset_processor(data.iloc[test_index], processor, image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     else:
-        test_set = DataLoader(MemeDataset(data.iloc[test_index], image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+        test_set = DataLoader(MemeDataset_mCLIP(data.iloc[test_index], multilingual_processor, image_folder), batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+
 
     if threshold == 'Youden':
         print("Estimating JYouden threshold... ")
@@ -187,6 +257,3 @@ print(len(all_predictions))
 print(len(all_true_labels))
 
 results_organizer.save_predictions_on_file(output_folder, data_path, data, prefix+"_" + text_model_name, all_predictions, all_true_labels, label_column, indexes)
-
-
-

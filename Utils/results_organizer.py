@@ -69,7 +69,7 @@ def save_predictions_on_file(output_folder, data_path, df, column_name, column_v
     Returns:
         pd.DataFrame: The updated DataFrame with the new column.
     """
-    csv_path = output_folder + 'models_prediction_'+ data_path.split('data/')[1].split('.')[0] +'.csv'
+    csv_path = output_folder + 'models_prediction_'+ data_path.split('training/')[1].split('.')[0] +'.csv'
     
     df = handle_csv(csv_path, df, indexes)
 
@@ -77,6 +77,10 @@ def save_predictions_on_file(output_folder, data_path, df, column_name, column_v
     if len(column_values) != len(df):
         raise ValueError("Length of column_values must match the number of rows in the DataFrame.")
 
+    # Check for NaN values in the label column and handle them
+    if df[label_column].isna().any():
+        raise ValueError(f"The label column '{label_column}' contains NaN values. Please check the data preprocessing step.")
+    
     if not df[label_column].astype(int).tolist() == list(true_labels):
         raise ValueError("Inconsistency among the provided labels and the ones in the dataset. Verify possible shuffle in the data.")
 
