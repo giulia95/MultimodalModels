@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence
+from torchvision.ops import sigmoid_focal_loss
 from tqdm import tqdm
 from sklearn.metrics import roc_curve
 from numpy import argmax
@@ -138,6 +139,35 @@ class SigLIPClassifier(nn.Module):
         logits = self.fc(combined_embeds)  # Linear layer
         return logits
 
+
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0, reduction="mean"):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, logits, targets):
+        targets = targets.float()
+        return sigmoid_focal_loss(
+            inputs=logits,
+            targets=targets,
+            alpha=self.alpha,
+            gamma=self.gamma,
+            reduction=self.reduction,
+        )
+
+def compute_alpha(y):
+    y = torch.as_tensor(y)
+    num_pos = (y == 1).sum().item()
+    num_neg = (y == 0).sum().item()
+    total = num_pos + num_neg
+    if total == 0:
+        return 0.5
+
+    # For sigmoid focal loss, alpha is the positive-class balancing factor.
+    alpha = num_neg / total
+    return float(min(max(alpha, 1e-6), 1 - 1e-6))
 
 def train(model, dataloader, optimizer, criterion, device):
     print("Check GPU in TRAINING")

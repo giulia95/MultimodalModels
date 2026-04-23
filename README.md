@@ -22,6 +22,10 @@ Important keys:
 - `data.label_column`: name of the label column to use.
 - `model.text_model_name`: model identifier used to choose the classifier branch.
 - `model.processor`: whether the model uses a Hugging Face processor.
+- `model.finetune`: `True` for full fine-tuning, `False` to train only top layers.
+- `model.loss`: `bce` or `focal`.
+- `model.focal_gamma`: gamma value used when `model.loss` is `focal`.
+- `model.focal_alpha`: optional default alpha in config; when using focal loss, alpha is computed from each training fold.
 
 ## Dataset expectations
 
@@ -39,9 +43,21 @@ Important keys:
 python multilingual_models.py
 ```
 
+Example model block:
+
+```yaml
+model:
+	text_model_name: sentence-transformers/clip-ViT-B-32-multilingual-v1
+	finetune: True
+	loss: focal
+	focal_gamma: 2.0
+	focal_alpha: 0.25
+```
+
 ## Notes
 
 - The script uses 10-fold cross-validation.
+- For `loss: focal`, alpha is recomputed on each training fold using class distribution (`compute_alpha`).
 - If `model.threshold` is set to `Youden`, the threshold is estimated from the validation split.
 - Results are written to the folder configured in `output.main_output_folder`.
 - The current code contains model-specific branches for mCLIP, mBLIP, and multilingual SigLIP.

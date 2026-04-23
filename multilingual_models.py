@@ -49,6 +49,9 @@ saving_folder = config["model"]["saving_folder"]
 text_model_name = config["model"]["text_model_name"]
 image_model_name = config["model"]["image_model_name"]
 finetune = config["model"].get("finetune", True)
+loss_name = str(config["model"].get("loss", "bce")).lower()
+focal_alpha = float(config["model"].get("focal_alpha", 0.25))
+focal_gamma = float(config["model"].get("focal_gamma", 2.0))
 
 prefix = "fine_tuned_"
 print("Results for this model will be saved with the prefix " + prefix + text_model_name.split('/')[1])
@@ -56,6 +59,15 @@ print("Results for this model will be saved with the prefix " + prefix + text_mo
 print("\tLoading data ...")
 data = get_data(data_path, label_path, label_column, dataset_name=dataset_name)
 print(f"Finetuning mode: {'full model' if finetune else 'last layers only'}")
+
+if loss_name in {"bce", "bcewithlogits", "bcewithlogitsloss"}:
+    criterion = nn.BCEWithLogitsLoss()
+    print("Loss function: BCEWithLogitsLoss")
+elif loss_name in {"focal", "focal_loss", "focalloss"}:
+    criterion = None
+    print(f"Loss function: FocalLoss (gamma={focal_gamma}, alpha computed from each training fold)")
+else:
+    raise ValueError(f"Unsupported loss '{loss_name}'. Use 'bce' or 'focal'.")
 
 print(data.head())
 
@@ -154,7 +166,10 @@ for train_index, test_index in kf.split(data):
     print('initializing model ... ')
 
     optimizer = optim.Adam(classifier.parameters(), lr=1e-4) #optimizes all the parameters of the classifier, including those of both the CLIP model and the fully connected (fc) layer.
-    criterion = nn.BCEWithLogitsLoss()
+    if loss_name in {"focal", "focal_loss", "focalloss"}:
+        alpha_fold = compute_alpha(data.iloc[train_index][label_column].values)
+        criterion = FocalLoss(alpha=alpha_fold, gamma=focal_gamma)
+        print(f"Fold {str(fold)} focal alpha: {alpha_fold:.6f}")
 
     print("training model...")
     for epoch in range(epochs):
