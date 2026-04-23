@@ -1,12 +1,11 @@
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 import pandas as pd
 from pathlib import Path
 import os
 import torch
 from sklearn.utils import shuffle 
-from torchvision import transforms
-from transformers import AutoProcessor, BlipForConditionalGeneration, AutoTokenizer, CLIPImageProcessor
+from transformers import AutoTokenizer, CLIPImageProcessor
 
 
 def infer_dataset_name(data_path, dataset_name=None):

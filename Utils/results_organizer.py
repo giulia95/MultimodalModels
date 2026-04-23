@@ -4,7 +4,6 @@ from sklearn.metrics import confusion_matrix
 from pathlib import Path
 import pandas as pd
 import os
-from sklearn.model_selection import KFold
 
 
 def save_performances_on_file(output_folder, prefix, output_file_name, true_labels, predictions):

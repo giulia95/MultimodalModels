@@ -1,21 +1,13 @@
-import pandas as pd
 from sklearn.model_selection import KFold
-from sklearn.utils import shuffle 
-from transformers import AutoModel, AutoTokenizer, AutoProcessor
-import os
-import numpy as np
-import json
+from transformers import AutoModel, AutoProcessor, BlipForConditionalGeneration
 import gc
 import yaml
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torch.utils.data import Subset
-import sys
 import torch
 import torch.nn as nn
 #from sentence_transformers import SentenceTransformer
 
-import torchvision.transforms as transforms
-from torchvision import transforms
 import torch.optim as optim
 from tqdm import tqdm
 from Utils import results_organizer
@@ -56,12 +48,14 @@ save_models = config["model"]["save_models"]
 saving_folder = config["model"]["saving_folder"]
 text_model_name = config["model"]["text_model_name"]
 image_model_name = config["model"]["image_model_name"]
+finetune = config["model"].get("finetune", True)
 
 prefix = "fine_tuned_"
 print("Results for this model will be saved with the prefix " + prefix + text_model_name.split('/')[1])
 
 print("\tLoading data ...")
 data = get_data(data_path, label_path, label_column, dataset_name=dataset_name)
+print(f"Finetuning mode: {'full model' if finetune else 'last layers only'}")
 
 print(data.head())
 
@@ -87,9 +81,8 @@ for train_index, test_index in kf.split(data):
         """
         img_model = AutoModel.from_pretrained('openai/clip-vit-base-patch32').to(device)
         text_model= AutoModel.from_pretrained(text_model_name).to(device)
-        tokenizer = AutoTokenizer.from_pretrained(text_model_name)
         processor = AutoProcessor.from_pretrained('openai/clip-vit-base-patch32')
-        classifier = mCLIPClassifier(img_model, text_model, finetune=True).to(device)
+        classifier = mCLIPClassifier(img_model, text_model, finetune=finetune).to(device)
 
         # CALCOLO PARAMETRI
         img_params = count_trainable(img_model)
@@ -109,7 +102,7 @@ for train_index, test_index in kf.split(data):
         #processor = BlipProcessor.from_pretrained(text_model_name)
         processor = AutoProcessor.from_pretrained(text_model_name)
         model = BlipForConditionalGeneration.from_pretrained(text_model_name).to(device)
-        classifier = mBLIPClassifier(model).to(device) 
+        classifier = mBLIPClassifier(model, finetune=finetune).to(device)
 
         # CALCOLO PARAMETRI
         blip_params = count_trainable(model)
@@ -126,7 +119,7 @@ for train_index, test_index in kf.split(data):
     elif text_model_name == "google/siglip-base-patch16-256-multilingual":
         processor = AutoProcessor.from_pretrained(text_model_name)
         model = AutoModel.from_pretrained(text_model_name).to(device)
-        classifier = SigLIPClassifier(model, finetune=True).to(device)
+        classifier = SigLIPClassifier(model, finetune=finetune).to(device)
 
         # CALCOLO PARAMETRI
         if classifier.fc is None:

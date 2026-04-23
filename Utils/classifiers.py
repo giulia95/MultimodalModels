@@ -1,4 +1,3 @@
-from transformers import BlipModel, BlipProcessor, CLIPModel
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence
@@ -6,7 +5,6 @@ from tqdm import tqdm
 from sklearn.metrics import roc_curve
 from numpy import argmax
 import yaml
-from transformers import AutoProcessor, BlipForConditionalGeneration, CLIPProcessor
 import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -67,7 +65,7 @@ class mBLIPClassifier(nn.Module):
     you can still extract useful embeddings from the intermediate encoder/decoder layers, 
     by passing both the image and text and grabbing hidden states. 
     """
-    def __init__(self, blip_model):
+    def __init__(self, blip_model, finetune=False):
         super(mBLIPClassifier, self).__init__()
         self.blip_model = blip_model
 
@@ -77,6 +75,11 @@ class mBLIPClassifier(nn.Module):
 
         # set the linear layer dimension
         self.fc = nn.Linear(512 + 512, 1)  # ora sarà 1024
+
+        # If finetune is False, train only projection and classification layers.
+        if not finetune:
+            for param in self.blip_model.parameters():
+                param.requires_grad = False
 
     def forward(self, inputs):
         device = next(self.parameters()).device

@@ -5,6 +5,7 @@ model:
   model_type: multimodal
   batch_size: 1
   epochs: 1
+  finetune: True
   threshold: Youden
   save_models: False 
   saving_folder: ./models/
