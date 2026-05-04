@@ -48,7 +48,7 @@ def handle_csv(csv_path, df, indexes):
         selected_df = pd.read_csv(csv_path)
     else:
         print(f"File '{csv_path}' does not exist. Using provided DataFrame.")
-        df = df.reindex(indexes)
+        df = df.iloc[indexes].copy().reset_index(drop=True)
         selected_df = df
     return selected_df
 

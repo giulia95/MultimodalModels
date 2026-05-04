@@ -6,8 +6,6 @@ from torch.utils.data import DataLoader
 from torch.utils.data import Subset
 import torch
 import torch.nn as nn
-#from sentence_transformers import SentenceTransformer
-
 import torch.optim as optim
 from tqdm import tqdm
 from Utils import results_organizer
@@ -16,7 +14,6 @@ from Utils.data_preprocessing import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
-#device='cuda'
 
 def count_trainable(module):
     #return number of trainable parameters
