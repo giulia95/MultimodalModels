@@ -47,7 +47,6 @@ text_model_name = config["model"]["text_model_name"]
 image_model_name = config["model"]["image_model_name"]
 finetune = config["model"].get("finetune", True)
 loss_name = str(config["model"].get("loss", "bce")).lower()
-focal_alpha = float(config["model"].get("focal_alpha", 0.25))
 focal_gamma = float(config["model"].get("focal_gamma", 2.0))
 
 prefix = "fine_tuned_"
@@ -200,8 +199,9 @@ for train_index, test_index in kf.split(data):
                 inputs = {k:v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
                 targets = targets.to(device).float()
                 outputs = classifier(inputs).squeeze(1)
+                probs = torch.sigmoid(outputs)
 
-                all_preds.append(outputs.cpu())
+                all_preds.append(probs.cpu())
                 all_targets.append(targets.cpu())
 
         # Concatenate everything into a single array
@@ -222,13 +222,14 @@ for train_index, test_index in kf.split(data):
             inputs = {k:v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
             targets = targets.to(device).float()
             outputs = classifier(inputs).squeeze(1)
+            probs = torch.sigmoid(outputs)
         
             if threshold == 'Youden':
                 #print("Using Threshold: " + str(best_threshold))
                 #threshold = get_Youden_threshold(targets.cpu().numpy(), outputs.cpu().numpy())
-                preds = (outputs > best_threshold).int()
+                preds = (probs > best_threshold).int()
             else:
-                preds = (outputs > threshold).int()
+                preds = (probs > threshold).int()
             
             all_predictions.extend(preds.cpu().numpy())
             all_true_labels.extend(targets.cpu().numpy())
