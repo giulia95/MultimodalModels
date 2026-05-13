@@ -7,11 +7,16 @@ model:
   epochs: 1
   finetune: True
   loss: bce
-  focal_alpha: 0.25
   focal_gamma: 2.0
   threshold: Youden
   save_models: False 
   saving_folder: ./models/
+  checkpoint:
+    checkpoint_enabled: True
+    checkpoint_every_n_epochs: 1
+    resume_from_checkpoint: True
+    checkpoint_dir: ./models/checkpoints
+    cleanup_checkpoints_on_finish: True
   
 data:
   dataset_name: EXIST
