@@ -6,3 +6,4 @@ __pycache__/
 job_logs/
 outputs*/
 run_script*.sh
+config*.yaml

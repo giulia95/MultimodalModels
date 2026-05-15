@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import yaml
+import argparse
 from torch.utils.data import DataLoader
 from torch.utils.data import Subset
 import torch
@@ -76,7 +77,11 @@ if torch.cuda.is_available():
     for i in range(num_devices):
         print(f"Device {i}: {torch.cuda.get_device_name(i)}")
 
-with open("config.yaml", "r") as config_file:
+parser = argparse.ArgumentParser(description="Run multilingual model training using a YAML config file.")
+parser.add_argument("--config", "-c", default="config.yaml", help="Path to YAML config file")
+args = parser.parse_args()
+
+with open(args.config, "r") as config_file:
     config = yaml.safe_load(config_file)
 
 # data
