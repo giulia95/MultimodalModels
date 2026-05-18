@@ -33,12 +33,17 @@ def load_latest_checkpoint(checkpoint_root, model_name, fold, device):
     model_tag = sanitize_name(model_name)
     fold_dir = os.path.join(checkpoint_root, model_tag, f"fold_{fold}")
     pattern = os.path.join(fold_dir, "checkpoint_epoch_*.pt")
-    checkpoints = sorted(glob.glob(pattern))
+    checkpoints = glob.glob(pattern)
 
     if not checkpoints:
         return None
 
-    latest_ckpt_path = checkpoints[-1]
+    # Sort by epoch number (not lexicographically)
+    def get_epoch_num(ckpt_path):
+        match = re.search(r"checkpoint_epoch_(\d+)\.pt", ckpt_path)
+        return int(match.group(1)) if match else -1
+    
+    latest_ckpt_path = max(checkpoints, key=get_epoch_num)
     checkpoint = torch.load(latest_ckpt_path, map_location=device)
     checkpoint["path"] = latest_ckpt_path
     return checkpoint
