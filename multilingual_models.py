@@ -16,6 +16,14 @@ from tqdm import tqdm
 from Utils import results_organizer
 from Utils.classifiers import *
 from Utils.data_preprocessing import *
+from Utils.checkpoints import (
+    sanitize_name,
+    load_latest_checkpoint,
+    save_checkpoint,
+    cleanup_model_checkpoints,
+    is_fold_completed,
+)
+import numpy as np
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
@@ -25,65 +33,27 @@ def count_trainable(module):
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
 
 
-def sanitize_name(name):
-    return re.sub(r"[^A-Za-z0-9._-]", "_", str(name))
+# checkpoint helpers moved to Utils/checkpoints.py
 
 
-def load_latest_checkpoint(checkpoint_root, model_name, fold, device):
-    model_tag = sanitize_name(model_name)
-    fold_dir = os.path.join(checkpoint_root, model_tag, f"fold_{fold}")
-    pattern = os.path.join(fold_dir, "checkpoint_epoch_*.pt")
-    checkpoints = glob.glob(pattern)
+def fold_predictions_path(output_folder, model_name, fold, prefix="preds_"):
+    tag = sanitize_name(model_name)
+    os.makedirs(output_folder, exist_ok=True)
+    return os.path.join(output_folder, f"{prefix}{tag}_fold_{fold}.npz")
 
-    if not checkpoints:
+
+def save_fold_predictions(output_folder, model_name, fold, preds, true_labels, indexes):
+    path = fold_predictions_path(output_folder, model_name, fold)
+    np.savez_compressed(path, preds=np.array(preds), true=np.array(true_labels), idx=np.array(indexes))
+    return path
+
+
+def load_fold_predictions(output_folder, model_name, fold):
+    path = fold_predictions_path(output_folder, model_name, fold)
+    if not os.path.exists(path):
         return None
-
-    # Sort by epoch number (not lexicographically)
-    def get_epoch_num(ckpt_path):
-        match = re.search(r"checkpoint_epoch_(\d+)\.pt", ckpt_path)
-        return int(match.group(1)) if match else -1
-    
-    latest_ckpt_path = max(checkpoints, key=get_epoch_num)
-    checkpoint = torch.load(latest_ckpt_path, map_location=device)
-    checkpoint["path"] = latest_ckpt_path
-    return checkpoint
-
-
-def save_checkpoint(checkpoint_root, model_name, fold, epoch, next_epoch, classifier, optimizer, interrupted=False):
-    model_tag = sanitize_name(model_name)
-    fold_dir = os.path.join(checkpoint_root, model_tag, f"fold_{fold}")
-    os.makedirs(fold_dir, exist_ok=True)
-
-    ckpt_path = os.path.join(fold_dir, f"checkpoint_epoch_{epoch}.pt")
-    checkpoint = {
-        "fold": fold,
-        "epoch": epoch,
-        "next_epoch": next_epoch,
-        "model_name": model_name,
-        "model_state_dict": classifier.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "interrupted": interrupted,
-    }
-    torch.save(checkpoint, ckpt_path)
-    return ckpt_path
-
-
-def cleanup_model_checkpoints(checkpoint_root, model_name):
-    model_tag = sanitize_name(model_name)
-    model_ckpt_dir = os.path.join(checkpoint_root, model_tag)
-    if os.path.isdir(model_ckpt_dir):
-        shutil.rmtree(model_ckpt_dir)
-        return model_ckpt_dir
-    return None
-
-
-def is_fold_completed(checkpoint_dir, model_name, fold, epochs, device):
-    """Check if a fold has completed all epochs."""
-    latest_checkpoint = load_latest_checkpoint(checkpoint_dir, model_name, fold, device)
-    if latest_checkpoint is None:
-        return False
-    next_epoch = int(latest_checkpoint.get("next_epoch", 0))
-    return next_epoch >= epochs
+    with np.load(path) as d:
+        return d['preds'].tolist(), d['true'].tolist(), d['idx'].tolist()
 
 if torch.cuda.is_available():
     num_devices = torch.cuda.device_count()
@@ -167,9 +137,23 @@ fold = 1
 for train_index, test_index in kf.split(data):
     gc.collect()
 
-    # Skip fold if it's already completed
-    if checkpoint_enabled and resume_from_checkpoint and is_fold_completed(checkpoint_dir, text_model_name, fold, epochs, device):
-        print(f"Fold {fold} already completed. Skipping...")
+    fold_already_completed = (
+        checkpoint_enabled
+        and resume_from_checkpoint
+        and is_fold_completed(checkpoint_dir, text_model_name, fold, epochs, device)
+    )
+    if fold_already_completed:
+        print(f"Fold {fold} already completed. Reusing the saved checkpoint for inference.")
+
+    # If per-fold predictions were already saved, load them and skip heavy model work
+    loaded = load_fold_predictions(output_folder, text_model_name, fold)
+    if loaded is not None:
+        p, t, idxs = loaded
+        all_predictions.extend(p)
+        all_true_labels.extend(t)
+        # idxs may be numpy types; ensure Python ints
+        indexes.extend([int(i) for i in idxs])
+        print(f"Loaded saved predictions for fold {fold}, skipping model initialization.")
         fold = fold + 1
         continue
 
@@ -268,7 +252,10 @@ for train_index, test_index in kf.split(data):
             start_epoch = int(latest_checkpoint.get("next_epoch", 0))
             print(f"Resumed fold {fold} from checkpoint {latest_checkpoint['path']} (next epoch: {start_epoch + 1})")
 
-    print("training model...")
+    if fold_already_completed:
+        print("Skipping training because this fold has already completed all epochs.")
+    else:
+        print("training model...")
     for epoch in range(start_epoch, epochs):
         try:
             train_loss = train(classifier, train_loader, optimizer, criterion, device)
@@ -341,6 +328,10 @@ for train_index, test_index in kf.split(data):
         best_threshold = get_Youden_threshold(all_targets, all_preds)
         print("Estimated Youden Threshold: ", best_threshold)
 
+    # Per-fold collectors so we can save predictions for this fold separately
+    fold_preds = []
+    fold_trues = []
+
     with torch.no_grad():
         #probs_0 = []
         #probs_1 = []
@@ -360,8 +351,12 @@ for train_index, test_index in kf.split(data):
             else:
                 preds = (probs > float(threshold)).int()
             
-            all_predictions.extend(preds.cpu().numpy())
-            all_true_labels.extend(targets.cpu().numpy())
+            cur_preds = preds.cpu().numpy().tolist()
+            cur_trues = targets.cpu().numpy().tolist()
+            all_predictions.extend(cur_preds)
+            all_true_labels.extend(cur_trues)
+            fold_preds.extend(cur_preds)
+            fold_trues.extend(cur_trues)
 
             """
             for item in outputs:
@@ -370,6 +365,13 @@ for train_index, test_index in kf.split(data):
             """
 
     indexes.extend(test_index)
+
+    # Save per-fold predictions so future runs can load them instead of re-running inference
+    try:
+        saved_path = save_fold_predictions(output_folder, text_model_name, fold, fold_preds, fold_trues, test_index)
+        print(f"Saved fold predictions: {saved_path}")
+    except Exception as e:
+        print(f"Warning: failed to save fold predictions for fold {fold}: {e}")
 
     if save_models:
             # Optionally save the models
