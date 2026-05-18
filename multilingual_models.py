@@ -76,6 +76,15 @@ def cleanup_model_checkpoints(checkpoint_root, model_name):
         return model_ckpt_dir
     return None
 
+
+def is_fold_completed(checkpoint_dir, model_name, fold, epochs, device):
+    """Check if a fold has completed all epochs."""
+    latest_checkpoint = load_latest_checkpoint(checkpoint_dir, model_name, fold, device)
+    if latest_checkpoint is None:
+        return False
+    next_epoch = int(latest_checkpoint.get("next_epoch", 0))
+    return next_epoch >= epochs
+
 if torch.cuda.is_available():
     num_devices = torch.cuda.device_count()
     print(f"Number of CUDA devices available: {num_devices}")
@@ -157,6 +166,12 @@ fold = 1
 
 for train_index, test_index in kf.split(data):
     gc.collect()
+
+    # Skip fold if it's already completed
+    if checkpoint_enabled and resume_from_checkpoint and is_fold_completed(checkpoint_dir, text_model_name, fold, epochs, device):
+        print(f"Fold {fold} already completed. Skipping...")
+        fold = fold + 1
+        continue
 
     if text_model_name == 'sentence-transformers/clip-ViT-B-32-multilingual-v1':
         """
